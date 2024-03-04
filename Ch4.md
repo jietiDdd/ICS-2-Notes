@@ -8,10 +8,16 @@
 - **condition codes**(也就是CC:OF,ZF,SF)
 - **status code**
 程序正常执行或发生事件
+分为：
+  - 1(AOK):正常执行
+  - 2(HLT):halt指令
+  - 3(ADR):非法地址（取指或内存）
+  - 4(INS):非法指令
 - **memory**
 
 ### Y86-64 Instructions
 一共有12条变长指令，通过其编号就可以判断其长度
+icode+ifun+rA+rB+valC
 <img src="./image/2024-02-19 104816.png" alt="Y86-64 Instructions" style="max-width: 50%;">
 其中cmovXX是rrmovq的子集
 - **Arithmetic and Logical Operations**
@@ -87,12 +93,15 @@ unix> yas eg.ys
 ```
 unix> yis eg.yo
 ```
+
 ### ISA(Instruction Set Architecture)
 ISA提供了软件与硬件之间的概念抽象层
+
 #### CISC vs.RISC
 RISC:ARM,CISC:X86
 <img src="./image/8M7L1QYT62((GO$ZW]KJ0XA.png" alt="CISC vs.RISC" style="max-width: 75%;">
 现在的ISA综合了CISC和RISC的优点
+
 ## 4.2 Logical Design & HCL
 ### Combinational Circuits
 - **Bit Equal**
@@ -108,6 +117,7 @@ Out = [
 这里的1可以认为是default
 - **Arithmetic Logic Unit**
   <img src="./image/]4E6V%257IJP[GHWXNIL}X%254L.png" alt="Arithmetic Logic Unit" style="max-width: 50%;">
+
 ### Storage(Sequential Circuits)
 Clocked Registers
 在clock呈现上升沿时，才根据input改变output
@@ -120,3 +130,72 @@ Clocked Registers
 数据处理器
 <img src="./image/`DRB5AM3_Z]%25E5(4X_1AP14.png" alt="Memory" style="max-width: 25%;">
 类似的读与写，设置write为0或1，非法地址时，error设置为1
+
+## 4.3 Sequential CPU Implementation
+
+### Instruction Execution Stages
+<img src="./image/2024-03-04 114637.png" alt="Instruction Execution Stages" style="max-width: 40%;">
+
+- **Fetch**
+读取指令
+因为PC是clock register，所以在上升沿的时候增加PC
+- **Decode**
+读取register，使用register file
+- **Execute**
+执行指令，ALU用于算术/逻辑单元，可能修改或使用CC
+- **Memory**
+读写内存
+- **Write Back**
+对寄存器进行写操作
+- **PC**
+更新PC
+
+当出现异常时（halt/非法指令/非法地址），processor loop停止
+#### Computation Steps
+<img src="./image/6`O[KYAL}ZYMZ[H4X%257{JJ8.png" alt="Computation Steps" style="max-width: 50%;">
+具体的就看书吧
+
+#### Values
+- **Determinate Values**:
+Fetch:PC,icode,ifun,rA(寄存器编号),rB,valC(常量值),valP(增加后的PC值)
+Decode:valA(寄存器存的值),valB
+Execute:valE(ALU计算结果),CC,Cnd(之前的CC以判断情况)
+Memory:valM(内存值)
+Write Back:valE,valM
+- **Indeterminate Values**:
+Decode:srcA(valA对应的位置,rA,%rsp),srcB(rB,%rsp)
+Execute:aluA(valA,valC,+8,-8),aluB(valB,0)
+Memory:addr(valA,valE),data(valA,valP)
+Write Back:dstE(rB,%rsp),dstM(rA,Cnd F)
+PC:newPC(valP,valC,valM)
+
+上述步骤同时在上升沿发生，status同时更新
+
+### SEQ CPU Implementation
+<mark>待补充</mark>
+
+
+## 4.4 Pipeline
+### Principles of Pipeline
+#### Limitations
+1. 不均匀的划分：时钟周期必须等于最长阶段延迟加上寄存器延迟
+2. 流水线过深，收益下降：每个阶段之间都要塞入流水线寄存器延迟，导致其占比大，单条指令延迟上升
+3. 指令之间的依赖关系：数据依赖、控制依赖
+
+### Pipeline Implemetation
+#### Pipeline Stages
+五级流水线：合并Fetch和PC(相当于PC被放在一开始，用于计算本条指令的位置而非下一条指令了)
+<img src="./image/2024-03-04 112149.png" alt="Pipeline Implemetation" width=75%>
+整个硬件框图。实际上大部分内容与SEQ+相比，是相当类似或者说相同的。
+变化有：
+1. 信号的重新组织与命名。在原有输入信号前面加上流水线寄存器名称（大写）以区分各自用到的信号。因为例如icode就在Decode、Execute、Memory和Write back阶段都存在，而且这些信号的内容还不同(因为属于不同的指令)，所以用流水线寄存器来加以区分。D_icode, E_icode, M_icode, and W_icode.  
+如果这些信号是某一阶段产生的，则以小写字母作前缀。例如valE是由Execute阶段产生的，所以在Execute阶段，他的名字叫e_valE.
+2. 在Fetch阶段增加了Predict PC部件来预测下一条指令的地址。
+3. 将valP和valA在Decode阶段合并为一个信号，所以多了一个Select A部件。书上P321。主要用处是减少控制信号和寄存器的数目。因为只有call指令会在memory阶段用到valP，只有jump指令会在execute阶段用到valP。这两种指令都不需要用到寄存器A。所以我们可以将这两个控制信号合并。这样，SEQ中的data部件就不需要了。因为在Fetch阶段本身就有Predict PC部件。这样valP在其他场合也不需要传播到Fetch阶段之外的场合去。
+#### Hazards
+**Predicting the PC:** 在上一条指令完成取指后开始猜测PC
+
+- 大部分无控制指令：valP，总是能猜对
+- call和无条件跳转：valC，总是能猜对
+- conditional jumps：valC，可能猜错
+- return指令：不用猜测

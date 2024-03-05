@@ -85,7 +85,7 @@ halt中止执行指令
 19 	ret
 20
 ```
-```
+```assembly
 21   # long sum(long *start, long count)
 22   # start in %rdi, count in %rsi
 23   sum:

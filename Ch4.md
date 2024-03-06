@@ -231,7 +231,7 @@ Clocked Registers
 
 1. 不均匀的划分：时钟周期必须等于最长阶段延迟加上寄存器延迟
 2. 流水线过深，收益下降：每个阶段之间都要塞入流水线寄存器延迟，导致其占比大，单条指令延迟上升
-3. 指令之间的依赖关系：数据依赖、控制依赖
+3. 指令之间的依赖关系：数据依赖、控制依赖，这需要Hazard
 
 ### Pipeline Implemetation
 
@@ -239,21 +239,63 @@ Clocked Registers
 
 五级流水线：合并Fetch和PC(相当于PC被放在一开始，用于计算本条指令的位置而非下一条指令了)
 
-<img src="./image/2024-03-04 112149.png" alt="Pipeline Implemetation" width = 500>
+<img src="./image/IPO25ZPV@`~Y0PN6SHGF{4X.png" alt="Pipeline Implemetation" width = 500>
 
 整个硬件框图。实际上大部分内容与SEQ+相比，是相当类似或者说相同的。
 变化有：
 
-1. 信号的重新组织与命名。在原有输入信号前面加上流水线寄存器名称（大写）以区分各自用到的信号。因为例如icode就在Decode、Execute、Memory和Write back阶段都存在，而且这些信号的内容还不同(因为属于不同的指令)，所以用流水线寄存器来加以区分。D_icode, E_icode, M_icode, and W_icode.  
-如果这些信号是某一阶段产生的，则以小写字母作前缀。例如valE是由Execute阶段产生的，所以在Execute阶段，他的名字叫e_valE.
+1. 信号的重新组织与命名。在原有输入信号前面加上流水线寄存器名称（大写）以区分各自用到的信号。因为例如icode就在Decode、Execute、Memory和Write back阶段都存在，而且这些信号的内容还不同(因为属于不同的指令)，所以用流水线寄存器来加以区分。D_icode, E_icode, M_icode, and W_icode.
+  如果这些信号是某一阶段产生的，则以小写字母作前缀。例如valE是由Execute阶段产生的，所以在Execute阶段，他的名字叫e_valE.
 2. 在Fetch阶段增加了Predict PC部件来预测下一条指令的地址。
 3. 将valP和valA在Decode阶段合并为一个信号，所以多了一个Select A部件。书上P321。主要用处是减少控制信号和寄存器的数目。因为只有call指令会在memory阶段用到valP，只有jump指令会在execute阶段用到valP。这两种指令都不需要用到寄存器A。所以我们可以将这两个控制信号合并。这样，SEQ中的data部件就不需要了。因为在Fetch阶段本身就有Predict PC部件。这样valP在其他场合也不需要传播到Fetch阶段之外的场合去。
 
-#### Hazards
+#### Predicting the PC
 
-**Predicting the PC:** 在上一条指令完成取指后开始猜测PC
+在上一条指令完成取指后开始猜测PC，使得马上执行下一条指令
 
 - 大部分无控制指令：valP，总是能猜对
 - call和无条件跳转：valC，总是能猜对
-- conditional jumps：valC，可能猜错
-- return指令：不用猜测
+- conditional jumps：valC，可能猜错，使用Select PC判断正误，猜错了要进行补救
+- return指令：无法猜测，使用Select PC得到正确的值
+
+### Hazards
+
+由于指令之间的依赖关系，需要进行冒险
+
+#### Data Hazard
+
+##### Stalling
+
+使用bubble插入nop，一次插入一个；bubble在时钟上升沿时让某条指令及其之后的指令停在原处不进入下一级，从而实现一个nop(即修改icode)，副作用是后面的指令都重复执行某个阶段。
+
+##### Bypass Paths
+
+在Decode阶段，需要取得valA和valB，这要么来源于register file，要么来源于forward，从接下来的阶段提前取得
+*Forwarding Sources:*
+
+- *Execute:* valE
+- *Memory:* valE,valM
+- *Write Back:* valE,valM
+
+优先取最近的阶段，register file优先级最低
+也有可能来不及(比如阶段结尾才获得的数据)，此时只能使用stall
+
+#### Control Hazard
+
+```hcl
+int f_PC = [
+#mispredicted branch. Fetch at incremented PC
+    M_icode == IJXX && !M_Cnd : M_valA;
+#completion of RET instruciton
+    W_icode == IRET : W_valM;
+#default: Use predicted value of PC
+    1: F_predPC
+];
+```
+
+##### Return
+
+下一条指令需要在fetch阶段stall三次，直到ret指令到达write back阶段，从而读到正确的W_valM
+之所以没有在memory阶段就恢复，是因为pred PC在fetch最开始，而m_valM则是在memory阶段结尾获得的，这会使得fecth阶段耗时翻倍，影响流水线性能，后面jump使用M_valA也是这个原因
+
+##### Branch Misprediction

@@ -296,6 +296,11 @@ int f_PC = [
 ##### Return
 
 下一条指令需要在fetch阶段stall三次，直到ret指令到达write back阶段，从而读到正确的W_valM
-之所以没有在memory阶段就恢复，是因为pred PC在fetch最开始，而m_valM则是在memory阶段结尾获得的，这会使得fecth阶段耗时翻倍，影响流水线性能，后面jump使用M_valA也是这个原因
+之所以没有在memory阶段就恢复，是因为pred PC在fetch最开始，而m_valM则是在memory阶段结尾获得的，这会使得fecth阶段耗时翻倍，影响流水线性能，后面jump使用M_valA也是这个原因(用大写)
 
 ##### Branch Misprediction
+
+
+
+### Exceptions
+

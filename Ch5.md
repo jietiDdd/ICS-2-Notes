@@ -15,9 +15,7 @@ void psum1(float a[],float p[],long n){
     for(i = 1;i < n,i++)
         p[i] = p[i - 1] + a[i];
 }
-```
 
-```c
 void psum2(float a[],float p[],long n){
     long i;
     p[0] = a[0];
@@ -43,9 +41,7 @@ typedef struct {
  } vec_rec, *vec_ptr ;
  
 typedef long data_t ;
-```
-
-```c  
+ 
 /*
 * Retrieve vector element and store at dest.
 * Return 0 (out of bounds) or 1 (successful)
@@ -67,9 +63,7 @@ data_t *get_vec_start(vec_ptr v)
 {
     return v->data ;
 }
-```
 
-```c
 void combine1(vec_ptr v, data_t *dest)
 {
     long i;
@@ -120,16 +114,14 @@ void lower1(char *s){
 ```
 
 ```c
-void lower1(char *s){
+void lower2(char *s){
     long i;
     long len = strlen(s);
 
     for(i = 0;i < len; i++)
         if(s[i] >= 'A' && s[i] <= 'Z')
             s[i] -= ('A' - 'a');
-```
 
-```c
 size_t strlen(const char *s){
     long length = 0;
     while(*s != '\0'){
@@ -223,9 +215,7 @@ void twiddle1(int *xp, int *yp)
     *xp += *yp ;
     *xp += *yp ;
 }
-```
 
-```c
 void twiddle2(int *xp, int *yp)
 {
     *xp += 2* *yp ;
@@ -464,9 +454,7 @@ void combine7(vec_ptr v, int *dest)
       }
     }
   } 
-  ```
 
-  ```c
   void minmax2(int a[], int b[], int n)
   {
     int i;

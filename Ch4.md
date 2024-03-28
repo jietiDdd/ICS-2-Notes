@@ -200,6 +200,8 @@ Clocked Registers
 
 <img src="./image/6`O[KYAL}ZYMZ[H4X%257{JJ8.png" alt="Computation Steps" width = 500>
 
+<img src="./image/e677a23d1d478cce0ce95894436a0860.png" width = 300>
+
 具体的就看书吧
 
 #### Values
@@ -220,8 +222,6 @@ Clocked Registers
 上述步骤同时在上升沿发生，status同时更新
 
 ### SEQ CPU Implementation
-
-<mark>待补充</mark>
 
 ## 4.4 Pipeline
 
@@ -260,7 +260,7 @@ Clocked Registers
 
 ### Hazards
 
-由于指令之间的依赖关系，需要进行冒险
+由于指令之间的依赖关系，需要进行冒险，记住主要的四个就可以(ret,mispredicting jmp,load/use,exception)
 
 #### Data Hazard
 
@@ -273,12 +273,14 @@ Clocked Registers
 在Decode阶段，需要取得valA和valB，这要么来源于register file，要么来源于forward，从接下来的阶段提前取得
 *Forwarding Sources:*
 
-- *Execute:* valE
-- *Memory:* valE,valM
-- *Write Back:* valE,valM
+- *Execute:* e_valE
+- *Memory:* M_valE,m_valM
+- *Write Back:* W_valE,W_valM
 
 优先取最近的阶段，register file优先级最低
-也有可能来不及(比如阶段结尾才获得的数据)，此时只能使用stall
+一般来说都可以forwarding，从而不需要stall和插入bubble，但也有可能来不及(即load/use)，此时只能使用一次stall来在Execute阶段插入一个bubble
+
+<img src="./image/023cfde5ff996b6a71a4ae5715bc5749.png" alt="Load/Use-Hazard" width = 300>
 
 #### Control Hazard
 
@@ -293,14 +295,302 @@ int f_PC = [
 ];
 ```
 
-##### Return
-
-下一条指令需要在fetch阶段stall三次，直到ret指令到达write back阶段，从而读到正确的W_valM
-之所以没有在memory阶段就恢复，是因为pred PC在fetch最开始，而m_valM则是在memory阶段结尾获得的，这会使得fecth阶段耗时翻倍，影响流水线性能，后面jump使用M_valA也是这个原因(用大写)
+一般来说都会选择TAKEN，即valP
 
 ##### Branch Misprediction
 
+分别在Decode和Execute阶段插入两个bubble来及时阻止错误执行的两条指令，并把状态码改回来(所以会有M_Cnd写回的路径)
+
+<img src="./image/138b936e950dcfb0a098b8b0d9a12d5e.png" alt="MisPre-Hazard" width = 300>
+
+##### Return
+
+下一条指令需要在fetch阶段stall并插入3个bubble，直到ret指令到达write back阶段，从而读到正确的W_valM
+之所以没有在memory阶段就恢复，是因为pred PC在fetch最开始，而m_valM则是在memory阶段结尾获得的，这会使得fecth阶段耗时翻倍，影响流水线性能，后面jump使用M_valA也是这个原因(用大写)
+
+<img src="./image/5e8d57c13147ac59762ca9147f89e8f9.png" alt="Ret-Hazard" width = 300>
+
+#### Exceptions
+
+在每个阶段都加入状态码来传递，在Write Back阶段再集中顺序处理异常
+
+### PIPE CPU Implementation
+
+#### PIPE Control Logic
+
+##### Control Cases
+
+- **Detection**: 
+  | Condition | Trigger |
+  | --- | --- |
+  | Processing ret | IRET in { D_icode, E_icode, M_icode } |
+  | Load/Use Hazard | E_icode in { IMRMOVL, IPOPL } && E_dstM in { d_srcA, d_srcB } |
+  | Mispredicted Branch | E_icode = IJXX & !e_Cnd |
+- **Action**:
+  | Condition | F | D | E | M | W |
+  | --- | --- | --- | --- | --- | --- |
+  | Processing ret | stall | bubble | normal | normal | normal |
+  | Load/Use Hazard | stall | stall | bubble | normal | normal |
+  | Mispredicted Branch | normal | bubble | bubble | normal | normal |
+
+##### Control Combinations
+
+<img src="./image/99de04910fb58e2b7a0b35577e858ce7.png" alt="Control-Combinations" width = 300>
+
+###### Combination A
+
+jmp错误预测，此时也应当按照错误预测处理且stall在fetch，PC使用M_valA
+| Condition | F | D | E | M | W |
+  | --- | --- | --- | --- | --- | --- |
+  | Processing ret | stall | bubble | normal | normal | normal |
+  | Mispredicted Branch | normal | bubble | bubble | normal | normal |
+  | Combination | stall | bubble | bubble | normal | normal |
+
+###### Combination B
+
+load的是%rsp，此时优先处理load/use，并将ret控制在decode阶段
+| Condition | F | D | E | M | W |
+  | --- | --- | --- | --- | --- | --- |
+  | Processing ret | stall | bubble | normal | normal | normal |
+  | Load/Use Hazard | stall | stall | bubble | normal | normal |
+  | Combination | stall | stall + bubble | bubble | normal | normal |
+  | Desired | stall | stall | bubble | normal | normal |
+
+#### Performance Analysis
+
+计算CPI，理想情况下1.0
+
+#### HCL of PIPE CPU
+
+```hcl
+################ Fetch Stage     ###################################
+
+## What address should instruction be fetched at
+word f_pc = [
+	# Mispredicted branch.  Fetch at incremented PC
+	M_icode == IJXX && !M_Cnd : M_valA;
+	# Completion of RET instruction
+	W_icode == IRET : W_valM;
+	# Default: Use predicted value of PC
+	1 : F_predPC;
+];
+
+## Determine icode of fetched instruction
+word f_icode = [
+	imem_error : INOP;
+	1: imem_icode;
+];
+
+# Determine ifun
+word f_ifun = [
+	imem_error : FNONE;
+	1: imem_ifun;
+];
+
+# Is instruction valid?
+bool instr_valid = f_icode in 
+	{ INOP, IHALT, IRRMOVQ, IIRMOVQ, IRMMOVQ, IMRMOVQ,
+	  IOPQ, IJXX, ICALL, IRET, IPUSHQ, IPOPQ, IIADDQ };
+
+# Determine status code for fetched instruction
+word f_stat = [
+	imem_error: SADR;
+	!instr_valid : SINS;
+	f_icode == IHALT : SHLT;
+	1 : SAOK;
+];
+
+# Does fetched instruction require a regid byte?
+bool need_regids =
+	f_icode in { IRRMOVQ, IOPQ, IPUSHQ, IPOPQ, 
+		     IIRMOVQ, IRMMOVQ, IMRMOVQ, IIADDQ };
+
+# Does fetched instruction require a constant word?
+bool need_valC =
+	f_icode in { IIRMOVQ, IRMMOVQ, IMRMOVQ, IJXX, ICALL, IIADDQ };
+
+# Predict next value of PC
+word f_predPC = [
+	f_icode in { IJXX, ICALL } : f_valC;
+	1 : f_valP;
+];
+
+################ Decode Stage ######################################
 
 
-### Exceptions
+## What register should be used as the A source?
+word d_srcA = [
+	D_icode in { IRRMOVQ, IRMMOVQ, IOPQ, IPUSHQ  } : D_rA;
+	D_icode in { IPOPQ, IRET } : RRSP;
+	1 : RNONE; # Don't need register
+];
 
+## What register should be used as the B source?
+word d_srcB = [
+	D_icode in { IOPQ, IRMMOVQ, IMRMOVQ, IIADDQ  } : D_rB;
+	D_icode in { IPUSHQ, IPOPQ, ICALL, IRET } : RRSP;
+	1 : RNONE;  # Don't need register
+];
+
+## What register should be used as the E destination?
+word d_dstE = [
+	D_icode in { IRRMOVQ, IIRMOVQ, IOPQ, IIADDQ} : D_rB;
+	D_icode in { IPUSHQ, IPOPQ, ICALL, IRET } : RRSP;
+	1 : RNONE;  # Don't write any register
+];
+
+## What register should be used as the M destination?
+word d_dstM = [
+	D_icode in { IMRMOVQ, IPOPQ } : D_rA;
+	1 : RNONE;  # Don't write any register
+];
+
+## What should be the A value?
+## Forward into decode stage for valA
+word d_valA = [
+	D_icode in { ICALL, IJXX } : D_valP; # Use incremented PC
+	d_srcA == e_dstE : e_valE;    # Forward valE from execute
+	d_srcA == M_dstM : m_valM;    # Forward valM from memory
+	d_srcA == M_dstE : M_valE;    # Forward valE from memory
+	d_srcA == W_dstM : W_valM;    # Forward valM from write back
+	d_srcA == W_dstE : W_valE;    # Forward valE from write back
+	1 : d_rvalA;  # Use value read from register file
+];
+
+word d_valB = [
+	d_srcB == e_dstE : e_valE;    # Forward valE from execute
+	d_srcB == M_dstM : m_valM;    # Forward valM from memory
+	d_srcB == M_dstE : M_valE;    # Forward valE from memory
+	d_srcB == W_dstM : W_valM;    # Forward valM from write back
+	d_srcB == W_dstE : W_valE;    # Forward valE from write back
+	1 : d_rvalB;  # Use value read from register file
+];
+
+################ Execute Stage #####################################
+
+## Select input A to ALU
+word aluA = [
+	E_icode in { IRRMOVQ, IOPQ } : E_valA;
+	E_icode in { IIRMOVQ, IRMMOVQ, IMRMOVQ, IIADDQ } : E_valC;
+	E_icode in { ICALL, IPUSHQ } : -8;
+	E_icode in { IRET, IPOPQ } : 8;
+	# Other instructions don't need ALU
+];
+
+## Select input B to ALU
+word aluB = [
+	E_icode in { IRMMOVQ, IMRMOVQ, IOPQ, ICALL, 
+		     IPUSHQ, IRET, IPOPQ, IIADDQ } : E_valB;
+	E_icode in { IRRMOVQ, IIRMOVQ } : 0;
+	# Other instructions don't need ALU
+];
+
+## Set the ALU function
+word alufun = [
+	E_icode == IOPQ : E_ifun;
+	1 : ALUADD;
+];
+
+## Should the condition codes be updated?
+bool set_cc = E_icode == IOPQ || E_icode == IIADDQ &&
+	# State changes only during normal operation
+	!m_stat in { SADR, SINS, SHLT } && !W_stat in { SADR, SINS, SHLT };
+
+## Generate valA in execute stage
+word e_valA = E_valA;    # Pass valA through stage
+
+## Set dstE to RNONE in event of not-taken conditional move
+word e_dstE = [
+	E_icode == IRRMOVQ && !e_Cnd : RNONE;
+	1 : E_dstE;
+];
+
+################ Memory Stage ######################################
+
+## Select memory address
+word mem_addr = [
+	M_icode in { IRMMOVQ, IPUSHQ, ICALL, IMRMOVQ } : M_valE;
+	M_icode in { IPOPQ, IRET } : M_valA;
+	# Other instructions don't need address
+];
+
+## Set read control signal
+bool mem_read = M_icode in { IMRMOVQ, IPOPQ, IRET };
+
+## Set write control signal
+bool mem_write = M_icode in { IRMMOVQ, IPUSHQ, ICALL };
+
+#/* $begin pipe-m_stat-hcl */
+## Update the status
+word m_stat = [
+	dmem_error : SADR;
+	1 : M_stat;
+];
+#/* $end pipe-m_stat-hcl */
+
+## Set E port register ID
+word w_dstE = W_dstE;
+
+## Set E port value
+word w_valE = W_valE;
+
+## Set M port register ID
+word w_dstM = W_dstM;
+
+## Set M port value
+word w_valM = W_valM;
+
+## Update processor status
+word Stat = [
+	W_stat == SBUB : SAOK;
+	1 : W_stat;
+];
+
+################ Pipeline Register Control #########################
+
+# Should I stall or inject a bubble into Pipeline Register F?
+# At most one of these can be true.
+bool F_bubble = 0;
+bool F_stall =
+	# Conditions for a load/use hazard
+	E_icode in { IMRMOVQ, IPOPQ } &&
+	 E_dstM in { d_srcA, d_srcB } ||
+	# Stalling at fetch while ret passes through pipeline
+	IRET in { D_icode, E_icode, M_icode };
+
+# Should I stall or inject a bubble into Pipeline Register D?
+# At most one of these can be true.
+bool D_stall = 
+	# Conditions for a load/use hazard
+	E_icode in { IMRMOVQ, IPOPQ } &&
+	 E_dstM in { d_srcA, d_srcB };
+
+bool D_bubble =
+	# Mispredicted branch
+	(E_icode == IJXX && !e_Cnd) ||
+	# Stalling at fetch while ret passes through pipeline
+	# but not condition for a load/use hazard
+	!(E_icode in { IMRMOVQ, IPOPQ } && E_dstM in { d_srcA, d_srcB }) &&
+	  IRET in { D_icode, E_icode, M_icode };
+
+# Should I stall or inject a bubble into Pipeline Register E?
+# At most one of these can be true.
+bool E_stall = 0;
+bool E_bubble =
+	# Mispredicted branch
+	(E_icode == IJXX && !e_Cnd) ||
+	# Conditions for a load/use hazard
+	E_icode in { IMRMOVQ, IPOPQ } &&
+	 E_dstM in { d_srcA, d_srcB};
+
+# Should I stall or inject a bubble into Pipeline Register M?
+# At most one of these can be true.
+bool M_stall = 0;
+# Start injecting bubbles as soon as exception passes through memory stage
+bool M_bubble = m_stat in { SADR, SINS, SHLT } || W_stat in { SADR, SINS, SHLT };
+
+# Should I stall or inject a bubble into Pipeline Register W?
+bool W_stall = W_stat in { SADR, SINS, SHLT };
+bool W_bubble = 0;
+#/* $end pipe-all-hcl */
+```

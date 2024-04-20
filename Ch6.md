@@ -1,4 +1,4 @@
-# Ch6-The Memory Hierarchy
+# CH6-The Memory Hierarchy
 
 ## 6.1 RAM
 

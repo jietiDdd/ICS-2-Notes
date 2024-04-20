@@ -492,7 +492,7 @@ word alufun = [
 ];
 
 ## Should the condition codes be updated?
-bool set_cc = E_icode == IOPQ || E_icode == IIADDQ &&
+bool set_cc = (E_icode == IOPQ || E_icode == IIADDQ) &&
 	# State changes only during normal operation
 	!m_stat in { SADR, SINS, SHLT } && !W_stat in { SADR, SINS, SHLT };
 

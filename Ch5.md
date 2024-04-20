@@ -474,7 +474,7 @@ void combine7(vec_ptr v, int *dest)
 ## 5.4 Understanding Memory Performance
 
 - **Load Performance**:认为load的latency为4.00，issue为1.00
-- **Store Performance**:认为store的latency为1.00，issue为1.00
+- **Store Performance**:认为store的latency为2.00，issue为1.00
 
 ```c
 void write_read(long *src, 

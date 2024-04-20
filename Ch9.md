@@ -1,4 +1,4 @@
-# Ch9-Virtual Memory
+# CH9-Virtual Memory
 
 ## 9.9 Dynamic Memory Allocation
 
@@ -277,4 +277,212 @@ static void place(void *bp, size_t asize)
         PUT(FTRP(bp), PACK(csize, 1) ;
     }
 }
+```
+
+### How to Achieve Better Performance?
+
+#### Explicit Free Lists
+
+显式空闲链表会在空闲块的有效载荷中额外维护空闲链表的前驱和后继的指针，需要注意链表顺序和堆顺序不一定一致
+此时首次分配时，O(n)中的n不再是块总数，而是空闲块的总数；对于释放分配块，有以下策略：
+
+- **LIFO(后进先出)**：新释放的块放在链表的表头，此时释放和合并都可以在O(1)时间内完成
+- **Address-ordered policy**:让链表的顺序严格按照堆的地址顺序排列，虽然为了寻找合适的前驱，释放时间为O(n)，但是内存利用率显著高于LIFO
+
+#### Segregated Storage
+
+使用大小类(size class)来维护不同大小的空闲链表，比如可以按照2的幂次方来设计大小类，此时各个链表的块大小为：
+{1},{2},{3,4},{5\~8},...,{1025\~2048},{2049\~4096},{4097\~$\infty$}
+
+##### Simple Segregated Storage
+
+简单分离储存让每个大小类的空闲链表维护等大小的空闲块，块大小就是该大小类的上界，所以不会分割块
+分配时，如果对应的空闲链表非空，就使用第一个块分配；如果没有，就申请一个更大的堆，将新的堆分割成对应大小的空闲链表，再分配。这样分配的时间复杂度为O(1)。而释放时就直接插入到对应链表的头部就可以了
+该方法迅速，但空间利用率很低：不分割导致内部碎片；不合并导致外部碎片
+
+##### Segregated Fits
+
+各链表的块并不一样大，而是在一个范围之中
+分配时到对应的链表做首次适配，并将分割的块插入到合适的链表；如果没找到，就到更大的大小类中分配，直到找到为止；如果最大的大小类都没有，就申请扩大堆，分割出一个块，并将剩余部分插入到合适链表
+释放块时进行合并并放在合适的链表中
+这个方法的内存利用率接近对整个堆的最佳适配，也很迅速
+
+##### Buddy Systems
+
+此时每个大小类都是2的幂次方，最开始只有一个空闲的$2^m$的块
+分配一个$2^k$的块，找到第一个可用的$2^j$的块，j\==k完成，否则二分空闲块直到j\==k，此时剩下的被放入空闲链表的那半块就是伙伴(buddy)；释放时就向上合并伙伴直到伙伴也被分配
+
+<img src="./image/4012a2235edfd974894bba7aedd63f0f.png" alt="Buddy Systems" width=300>
+
+伙伴的地址只会和当前块有一位不同，比如当前块大小为$2^4$，地址为'xxx...x00000'，那么伙伴块的地址为'xxx...x10000'
+
+##### SLAB Allocator
+
+为大小不同的块分配memory pool，并使用最佳适配来找到memory pool，里面堆放着一些slab；初始化空闲链表时，将free slab分割成N bytes空闲块组成的链表，注意开头有个哨兵Next_Free；分配时，定位到memory pool并找到一个slab，并分配Next_Free指向的第一个slot；释放时，让Next_Free指向释放块
+组织一个pool中的各个slab，需要两个指针：current和partial；current只指向一个slab，用于分配，当其满了的时候压入partial，并新分配一个slab；partial指向一个slab链表，用于释放块，空闲slab也要释放
+
+## 9.10 Garbage Collection
+
+自动释放已经不会用到的已分配块，使用下图来定位失去指针的垃圾，其中根结点不在堆中，而是寄存器、栈或者全局变量等，它们会指向堆中的指针；堆结点在堆中；如果从根结点不可达，那么就是垃圾
+
+<img src="./image/b7a25788841a7720448be61f207f8e50.png" alt="Garbage Collection" width=300>
+
+当然这可能标记错误，所以是保守的回收
+
+### Mark and Sweep Collecting
+
+<img src="./image/cb9803f6db4fc45b4d7b71df6d12135b.png" alt="Mark & Sweep" width=300>
+
+使用深度优先遍历标记节点
+
+```c
+ptr mark(ptr p) 
+{
+    if (!is_ptr(p)) return;         // do nothing if not pointer
+    if (markBitSet(p)) return;      // check if already marked
+    setMarkBit(p);                  // set the mark bit
+    for (i=0; i < length(p); i++)   // call mark on all words
+        mark(p[i]);                 // in the block
+    return;
+}      
+```
+
+使用块大小遍历并释放垃圾
+
+```c
+ptr sweep(ptr p, ptr end) 
+{
+    while (p < end) {
+        if markBitSet(p)
+            clearMarkBit();
+        else if (allocateBitSet(p)) 
+            free(p);
+        p += length(p);
+}
+```
+
+## 9.11 Common Memory-Related Bugs in C Programs
+
+### Reading uninitialized memory
+
+```c
+/* return y = Ax */
+int *matvec(int **A, int *x) 
+{ 
+    int *y = malloc(N * sizeof(int)); // use calloc or memset instead
+    int i, j;
+    for (i = 0; i < N; i++)
+        for (j = 0; j < N; j++)
+            y[i] += A[i][j]*x[j]; // y[i] != 0, because malloc cannot initialization     
+    return y;
+}
+```
+
+### Overwriting memory
+
+#### Allocating the (possibly) wrong sized object
+
+```c
+int i, **p;
+p = (int **)malloc(N * sizeof(int)); // sizeof(*int), no error but may oevrwrite
+for (i = 0; i < N; i++) {
+    p[i] = malloc(M * sizeof(int));
+}
+```
+
+#### Off-by-one
+
+```c
+int i, **p;
+p = (int **)malloc(N * sizeof(int *));
+for (i = 0; i <= N; i++) { // i < N
+    p[i] = malloc(M * sizeof(int));
+}
+```
+
+#### Stack Buffer Overflow
+
+```c
+void bufoverflow()
+ { 
+    char buf[64];
+    gets(buf); /* Here is the stack buffer overflow bug */
+    return;
+}
+```
+
+#### Referencing a pointer instead of the object it points to
+
+```c
+int *binheapDelete(int **binheap, int *size) 
+{
+    int *packet;
+    packet = binheap[0];
+    binheap[0] = binheap[*size - 1];
+    *size--;  /* This should be (*size)-- */
+    // as * and -- have the same priority, however, it's right calc
+    heapify(binheap, *size, 0);
+    return packet;
+}
+```
+
+#### Misunderstanding pointer arithmetic
+
+```c
+int *search(int *p, int val) 
+{
+   while (*p && *p != val)
+      p += sizeof(int); /* Should be p++ */
+   return p;
+}
+```
+
+### Referencing nonexistent variables
+
+```c
+int *foo () 
+{
+    int val;
+    return &val; // Forgetting that local variables disappear when a function returns
+}  
+```
+
+### Freeing blocks multiple times
+
+```c
+x = malloc(N*sizeof(int));
+<manipulate x>
+free(x);
+y = malloc(M*sizeof(int));
+<manipulate y>
+free(x); // free(y)
+```
+
+### Referencing freed blocks
+
+```c
+x = malloc(N*sizeof(int));
+<manipulate x>
+free(x);
+// ...
+y = malloc(M*sizeof(int));
+for (i=0; i<M; i++)
+    y[i] = x[i]++;
+```
+
+### Failing to free blocks (memory leaks)
+
+```c
+foo() 
+{
+    int *x = malloc(N*sizeof(int));
+    // ...
+    return; /* x is garbage at this point */
+}
+```
+
+### Dereferencing bad pointers
+
+```c
+scanf("%d",val); // scanf("%d",&val);
 ```

@@ -487,4 +487,153 @@ foo()
 scanf("%d",val); // scanf("%d",&val);
 ```
 
-## 9.1-5
+## 9.1-5 Virtual Memory
+
+### Physical & Virtual Addressing
+
+CPU使用VA来访问PA，CPU芯片上的MMU(内存管理单元)利用存放在主存中的查询表(由操作系统管理)来动态翻译虚拟地址
+
+<img src="./image/78cd020ffac1e68a2a213a84b700e492.png" alt="A System Using Virtual Addressing" width=300>
+
+### Address Space
+
+一般假设使用的是线性地址空间，其中VA是$N = 2^n$个地址，PA是$M = 2^m$个地址
+
+### Page
+
+虚拟内存存放在磁盘上，VM系统将虚拟内存分割成虚拟页，每个虚拟页大小为$P = 2^p$字节，作为磁盘和主存之间的传输单元
+虚拟页面集合分为三个不相交的子集：
+
+- **Unallocated**: VM系统未创建的页，不占任何磁盘空间
+- **Cached**: 已缓存在物理内存的已分配页
+- **Uncached**: 未缓存在物理内存的已分配页
+
+#### Page Table
+
+由页表条目组成(PTE)
+
+<img src="./image/16fdde9d732dc31437a89d8be3f2b744.png" alt="Page Table" width=500>
+
+##### Page Hits
+
+有效位为1，说明缓存在内存中
+
+##### Page Faults
+
+字物理内存(DRAM)缓存不命中称为缺页，则会牺牲页，即将在内存中缓存的某一页复制回磁盘，并将访问页缓存在内存中
+
+### Why Virtual Memory (VM)?
+
+**TODO**
+不同进程的虚拟空间不同，但可以共享部分物理内存(共享页面)
+在带许可位的页表中，每个PTE有3个许可位，有一条指令违背许可条件，则触发段错误process SIGSEGV (segmentation fault)
+
+## 9.6 Address translation
+
+<img src="./image/96a68e2bafa0f3079432cb32ed398c90.png" alt="Address Translation via Page Table" width=500>
+
+<img src="./image/5548e59126538f406d34495346ad7f30.png" alt="Simple Memory System Example" width=300>
+
+TODO example
+
+### Multi-Level Page Tables
+
+<img src="./image/fe28a69fdf0cb1ac2ac3393bb28c7384.png" alt="Multi-Level Page Tables" width=300>
+
+??? 9.7 9.8
+
+## 9.8 Memory Mapping
+
+### Exec() revisited
+
+TODO
+
+### User-level memory mapping
+
+```c
+void *mmap(void *start, int len, int prot, int flags, int fd, int offset);
+```
+
+其返回指向映射区域的指针
+
+<img src="./image/57f7a7f8970213bad2d8ed0dafab6314.png" alt="User-level memory mapping" width=300>
+
+### Fork() revisted
+
+### Shared Object
+
+TODO
+
+## Replacement Policy
+
+### Cache Management
+
+$AMAT = (P_{Hit} * T_{M}) + (P_{Miss} * T_{D})$
+miss rate更有决定性，disk access开销更大
+
+### The Optimal Replacement Policy
+
+替换掉未来最久才被访问的页
+**Example**:
+
+<img src="./image/e156a53a4dd024aba3fab9c89a84e8ec.png" alt="The Optimal Replacement Policy" width=300>
+
+开始的miss是cold miss，对于后面的两次miss，第一次发现未来页2是最久访问的，因此替换页2；第二次发现只要不替换页1都可以，因此替换掉页0也是可以的
+
+### First-In, First-Out Replacement Policy
+
+使用队列实现
+不过Belady’s Anomaly说明当Cache大小扩大时，反而可能出现miss rate上升，不过拥有栈属性(Stack property)的算法不会出现这个问题，这是因为扩容时，可以保证原来在Cache中的内容依然在扩容后的Cache中
+
+### Random Replacement Policy
+
+随机替换
+
+### LRU Replacement Policy
+
+一种使用history来猜测future的算法，LFU替换访问频率最低的页，LRU替换最后一次访问最久远的页，是一种栈属性的算法，保证扩容时绝不会让hit rate下降
+
+### Random Access Workload
+
+<img src="./image/52304fece1a4b680616881f4636e8edf.png" alt="Random Access Workload" width=200 align = right>
+
+访问的页在100个页中随机，发现真实算法的hit rate都与cache size呈强线性关系，即真实算法的选择无关紧要；但理想的optimal表现的就比真实算法好
+
+### “80-20” Workload
+
+<img src="./image/1e918828577d5ed6a7905cbc79f11d25.png" alt="“80-20” Workload" width=200 align=right>
+
+80%的访问都是在访问热门的占比20%的页(Hot pages)，结果说明Optimal > LRU > FIFO = random，但并不是说LRU就会比FIFO和random好得多，这由miss的开销决定
+
+### “Looping Sequential” Workload
+
+<img src="./image/bed7f9ec4b166e956672ff1f56c4d433.png" alt="“Looping Sequential” Workload" width = 200 align=right>
+
+反复顺序访问页0-49，共10000次，这在数据库中很常见，但LRU和FIFO表现的很差，因为都是将最老的页替换掉，除非容量大于50；而random表现要好，这是因为不会出现边际效应，在前面说的TLB中就用这个
+
+### How to implement LRU?
+
+理想的想法是为每个物理页面分配一个时间戳(time stamp)，在替换时根据时间戳排序，但当页面过多时排序是灾难性的
+
+#### Clock Algorithm
+
+<img src="./image/13f438d278932738c6a1671eeaa6597d.png" alt="Clock" width=300>
+
+使用Clock算法可以近似LRU算法，为每个页面分配一个访问位(access bit)，当访问时设置为true，同时所有页面被构成一个环形的缓存区(clock)；当访问时，从当前位置开始顺时针扫描环形缓存区，如果为true就设置为false，如果为false就被替换掉。这个算法不能完美呈现LRU，但很接近，而使用dirty bit(表征数据是否被修改，即是否和内存一致)还可以进一步提升
+
+### Page Selection Policies
+
+对于何时将page放回memory，有以下方法：
+
+- 大部分采用按需页面调度(demand paging，即出现缺页时才换入页面)
+- 使用prefetching(预取)，猜测页面是否即将被使用，以提前调入页面
+- clustering(grouping，即聚类)可以一次将多个页面同时写入内存。存在两个数字low/high water mark，可用页面少于low water mark时，操作系统清除页面，直到可用页面多于high water mark
+
+### Control Thrashing
+
+控制抖动：
+
+- **admission control**: 不运行一部分进程，减少进程的工作集以适应内存
+- **out-of-memory killer**: 会直接终止内存密集型进程，但有一定副作用
+
+### Page Table Entry
